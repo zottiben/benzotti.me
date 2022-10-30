@@ -11,14 +11,8 @@ interface MainLayoutProps extends PageProps {
 
 export const Main = ({ children, headerButtons }: MainLayoutProps) => {
   return (
-    <>
-      {/* <Head>
-        <title>BenZotti.me</title>
-        <meta name="description" content="Personal website for benzotti.me" />
-      </Head> */}
-      <main className="flex overflow-hidden flex-row h-screen w-full bg-black">
-        <div className="container mx-auto px-4">{children}</div>
-      </main>
-    </>
+    <main className="flex overflow-hidden flex-row h-screen w-full bg-black">
+      <div className="container mx-auto px-4">{children}</div>
+    </main>
   );
 };
