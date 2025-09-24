@@ -35,7 +35,7 @@ jobs:
         run: |
           docker save ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }} | gzip > benzotti-${{ github.event.release.tag_name }}.tar.gz
 
-      - name: Deploy to Home Server
+      - name: Deploy to Host 
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
