@@ -14,7 +14,7 @@ defaults:
 
 jobs:
   deploy:
-    name: Deploy to Home Server
+    name: Deploy to Host 
     runs-on: ubuntu-latest
     permissions:
       contents: read
