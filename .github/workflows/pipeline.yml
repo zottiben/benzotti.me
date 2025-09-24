@@ -1,20 +1,12 @@
-name: benzotti.me Deployment
+name: benzotti.me
 
 on:
   release:
     types: [created]
 
 env:
-  AWS_REGION: ap-southeast-2 # set this to your preferred AWS region, e.g. us-west-1
-  ECR_REPOSITORY: benzotti-repo # set this to your Amazon ECR repository name
-  ECS_SERVICE: benzotti-service # set this to your Amazon ECS service name
-  ECS_CLUSTER: benzotti-cluster # set this to your Amazon ECS cluster name
-  ECS_TASK_DEFINITION:
-    .aws/task-definition.json # set this to the path to your Amazon ECS task definition
-    # file, e.g. .aws/task-definition.json
-  CONTAINER_NAME:
-    benzotti-container # set this to the name of the container in the
-    # containerDefinitions section of your task definition
+  IMAGE_NAME: benzotti-website
+  CONTAINER_NAME: benzotti-website
 
 defaults:
   run:
@@ -22,51 +14,63 @@ defaults:
 
 jobs:
   deploy:
-    name: Deploy
+    name: Deploy to Host 
     runs-on: ubuntu-latest
     permissions:
-      packages: write
       contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@13d241b293754004c80624b5567555c4a39ffbe3
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@aaf69d68aa3fb14c1d5a6be9ac61fe15b48453a2
-
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Build Docker image
         run: |
-          # Build a docker container and
-          # push it to ECR so that it can
-          # be deployed to ECS.
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-      - name: Fill in the new image ID in the Amazon ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@97587c9d45a4930bf0e3da8dd2feb2a463cf4a3a
-        with:
-          task-definition: ${{ env.ECS_TASK_DEFINITION }}
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
+          docker build -t ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }} .
+          docker build -t ${{ env.IMAGE_NAME }}:latest .
 
-      - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1.4.10
+      - name: Save Docker image
+        run: |
+          docker save ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }} | gzip > benzotti-${{ github.event.release.tag_name }}.tar.gz
+
+      - name: Deploy to Host 
+        uses: appleboy/scp-action@v0.1.7
         with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          source: "benzotti-${{ github.event.release.tag_name }}.tar.gz"
+          target: "/mnt/cache/appdata"
+
+      - name: Deploy and start container
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          script: |
+            cd /mnt/cache/appdata
+            docker load < benzotti-${{ github.event.release.tag_name }}.tar.gz
+
+            docker stop ${{ env.CONTAINER_NAME }} || true
+            docker rm ${{ env.CONTAINER_NAME }} || true
+
+            docker run -d \
+              --name ${{ env.CONTAINER_NAME }} \
+              --restart unless-stopped \
+              -p 3000:80 \
+              ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }}
+
+            rm -f benzotti-${{ github.event.release.tag_name }}.tar.gz
+
+            sleep 5
+            if docker ps | grep -q ${{ env.CONTAINER_NAME }}; then
+              echo "Deployment successful - Container running with tag ${{ github.event.release.tag_name }}"
+            else
+              echo "Deployment failed - Container not running"
+              exit 1
+            fi
